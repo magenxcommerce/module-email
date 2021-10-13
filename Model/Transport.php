@@ -3,8 +3,6 @@
  * Copyright © Magento, Inc. All rights reserved.
  * See COPYING.txt for license details.
  */
-declare(strict_types=1);
-
 namespace Magento\Email\Model;
 
 use Magento\Framework\App\Config\ScopeConfigInterface;
@@ -13,12 +11,12 @@ use Magento\Framework\Mail\MessageInterface;
 use Magento\Framework\Mail\TransportInterface;
 use Magento\Framework\Phrase;
 use Magento\Store\Model\ScopeInterface;
-use Laminas\Mail\Message;
-use Laminas\Mail\Transport\Sendmail;
+use Zend\Mail\Message;
+use Zend\Mail\Transport\Sendmail;
 
 /**
  * Class that responsible for filling some message data before transporting it.
- * @see \Laminas\Mail\Transport\Sendmail is used for transport
+ * @see \Zend\Mail\Transport\Sendmail is used for transport
  */
 class Transport implements TransportInterface
 {
@@ -34,26 +32,9 @@ class Transport implements TransportInterface
     const XML_PATH_SENDING_RETURN_PATH_EMAIL = 'system/smtp/return_path_email';
 
     /**
-     * Whether return path should be set or no.
-     *
-     * Possible values are:
-     * 0 - no
-     * 1 - yes (set value as FROM address)
-     * 2 - use custom value
-     *
-     * @var int
-     */
-    private $isSetReturnPath;
-
-    /**
-     * @var string|null
-     */
-    private $returnPathValue;
-
-    /**
      * @var Sendmail
      */
-    private $laminasTransport;
+    private $zendTransport;
 
     /**
      * @var MessageInterface
@@ -70,16 +51,26 @@ class Transport implements TransportInterface
         ScopeConfigInterface $scopeConfig,
         $parameters = null
     ) {
-        $this->isSetReturnPath = (int) $scopeConfig->getValue(
+        /* configuration of whether return path should be set or no. Possible values are:
+             * 0 - no
+             * 1 - yes (set value as FROM address)
+             * 2 - use custom value
+             * @see Magento\Config\Model\Config\Source\Yesnocustom
+             */
+        $isSetReturnPath = $scopeConfig->getValue(
             self::XML_PATH_SENDING_SET_RETURN_PATH,
             ScopeInterface::SCOPE_STORE
         );
-        $this->returnPathValue = $scopeConfig->getValue(
+        $returnPathValue = $scopeConfig->getValue(
             self::XML_PATH_SENDING_RETURN_PATH_EMAIL,
             ScopeInterface::SCOPE_STORE
         );
 
-        $this->laminasTransport = new Sendmail($parameters);
+        if ($isSetReturnPath == '2' && $returnPathValue !== null) {
+            $parameters .= ' -f' . \escapeshellarg($returnPathValue);
+        }
+
+        $this->zendTransport = new Sendmail($parameters);
         $this->message = $message;
     }
 
@@ -89,16 +80,9 @@ class Transport implements TransportInterface
     public function sendMessage()
     {
         try {
-            $laminasMessage = Message::fromString($this->message->getRawMessage())->setEncoding('utf-8');
-            if (2 === $this->isSetReturnPath && $this->returnPathValue) {
-                $laminasMessage->setSender($this->returnPathValue);
-            } elseif (1 === $this->isSetReturnPath && $laminasMessage->getFrom()->count()) {
-                $fromAddressList = $laminasMessage->getFrom();
-                $fromAddressList->rewind();
-                $laminasMessage->setSender($fromAddressList->current()->getEmail());
-            }
-
-            $this->laminasTransport->send($laminasMessage);
+            $this->zendTransport->send(
+                Message::fromString($this->message->getRawMessage())
+            );
         } catch (\Exception $e) {
             throw new MailException(new Phrase($e->getMessage()), $e);
         }
